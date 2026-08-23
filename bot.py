@@ -292,39 +292,48 @@ async def show_current_lesson(target_message: Message | CallbackQuery, user_id: 
             remember_message(user_id, m.message_id)
         return
 
-    # Находим самый актуальный урок:
-    # 1. Либо который идет прямо сейчас (-25 мин <= diff <= 10 мин)
-    # 2. Либо ближайший следующий
-    # 3. Либо первый ожидающий, если время прошло, но ученик еще не отмечен
+    # Логика:
+    # 1. Текущий урок (HOZIR): если начался не более 10 минут назад или начнется в течение 5 минут (-10 <= diff <= 5)
+    # 2. Если прошло больше 10 минут и ученик не зашел -> переключаемся на СЛЕДУЮЩИЙ ближайший урок (diff > 0)
     ongoing_b = None
     next_b = None
-    next_diff = 9999
+    next_diff = 999999
 
     for b in pending_lessons:
         dt = _booking_dt(b)
         if dt == datetime.max:
             continue
         diff = (dt - now).total_seconds() / 60.0
-        if -25 <= diff <= 10 and ongoing_b is None:
+        if -10 <= diff <= 5 and ongoing_b is None:
             ongoing_b = b
         elif diff > 0 and diff < next_diff:
             next_b = b
             next_diff = diff
 
-    # Приоритет: текущий -> ближайший следующий -> первый ожидающий
-    active_booking = ongoing_b or next_b or pending_lessons[0]
+    # Приоритет: текущий -> следующий предстоящий -> если все предстоящие завершены, последний из списка
+    active_booking = ongoing_b or next_b
+
+    if not active_booking:
+        text = t("no_more_lessons", lang)
+        if isinstance(target_message, CallbackQuery):
+            await target_message.answer()
+            await target_message.message.edit_text(text, reply_markup=main_menu(lang=lang))
+        else:
+            m = await target_message.answer(text, reply_markup=main_menu(lang=lang))
+            remember_message(user_id, m.message_id)
+        return
 
     dt = _booking_dt(active_booking)
     diff = (dt - now).total_seconds() / 60.0 if dt != datetime.max else 9999
     btype_s = t("demo_day", lang) if active_booking.get("type") == "Demoday" else t("ta_booking", lang)
     status_s = active_booking.get("status", "")
 
-    if -25 <= diff <= 10:
+    if -10 <= diff <= 5:
         badge_header = f"🔴 <b>{t('now_badge', lang)} ({btype_s}) — {status_icon(status_s)} {status_s}</b>"
     elif diff > 0:
         badge_header = f"🟡 <b>{t('next_badge', lang)} ({t('in_min', lang, min=int(diff))}) — {status_icon(status_s)} {status_s}</b>"
     else:
-        badge_header = f"⏳ <b>{btype_s} (Kutilmoqda / Ожидаем) — {status_icon(status_s)} {status_s}</b>"
+        badge_header = f"⏳ <b>{btype_s} ({status_icon(status_s)} {status_s})</b>"
 
     user_cache[user_id] = user_cache.get(user_id, {})
     user_cache[user_id]["timeline"] = timeline
@@ -1039,95 +1048,50 @@ async def update_command(message: Message):
 
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        proc = await asyncio.create_subprocess_exec(
-            "bash", "update.sh",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+        
+        # 1. Fetch & Reset
+        proc_fetch = await asyncio.create_subprocess_exec(
+            "git", "fetch", "origin", "main",
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             cwd=script_dir
         )
-        stdout, stderr = await proc.communicate()
-        res_text = stdout.decode("utf-8", errors="ignore").strip()
+        await proc_fetch.communicate()
+
+        proc_pull = await asyncio.create_subprocess_exec(
+            "git", "reset", "--hard", "origin/main",
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            cwd=script_dir
+        )
+        out_pull, _ = await proc_pull.communicate()
+        pull_str = out_pull.decode("utf-8", errors="ignore").strip()
+
+        # 2. Install requirements if any
+        venv_pip = os.path.join(script_dir, ".venv", "bin", "pip")
+        if os.path.exists(venv_pip):
+            proc_pip = await asyncio.create_subprocess_exec(
+                venv_pip, "install", "-r", "requirements.txt", "--quiet",
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                cwd=script_dir
+            )
+            await proc_pip.communicate()
+
+        success_msg = (
+            "✅ <b>Bot muvaffaqiyatli yangilandi va qayta ishga tushdi!</b>\n\n" +
+            f"<code>{pull_str}</code>"
+            if lang == "uz" else
+            "✅ <b>Бот успешно обновлён и перезапущен!</b>\n\n" +
+            f"<code>{pull_str}</code>"
+        )
         
-        success_title = "✅ <b>Bot muvaffaqiyatli yangilandi! / Бот успешно обновлён!</b>"
-        m = await message.answer(
-            f"{success_title}\n\n<code>{res_text[:400]}</code>",
+        await wait_msg.edit_text(
+            success_msg,
             parse_mode="HTML",
             reply_markup=persistent_menu(lang)
         )
-        remember_message(user_id, m.message_id)
+        
+        # 3. Graceful restart after message is sent
+        await asyncio.sleep(1.5)
+        os._exit(0)
+
     except Exception as e:
-        m = await message.answer(f"⚠️ Yangilashda xatolik: {e}")
-        remember_message(user_id, m.message_id)
-
-
-async def auto_updater_loop(bot: Bot):
-    """Har 15 daqiqada GitHub'dan yangilanishlarni tekshiradi va avtomatik o'rnatadi"""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    git_dir = os.path.join(script_dir, ".git")
-    if not os.path.exists(git_dir):
-        return
-
-    while True:
-        try:
-            await asyncio.sleep(900)  # Har 15 daqiqa
-            # 1. Fetch
-            proc_fetch = await asyncio.create_subprocess_exec(
-                "git", "fetch", "origin", "main",
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                cwd=script_dir
-            )
-            await proc_fetch.communicate()
-
-            # 2. Status
-            proc_status = await asyncio.create_subprocess_exec(
-                "git", "status", "-uno",
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                cwd=script_dir
-            )
-            stdout, _ = await proc_status.communicate()
-            status_text = stdout.decode("utf-8", errors="ignore")
-
-            if "Your branch is behind" in status_text or "behind" in status_text:
-                # 3. Pull
-                proc_pull = await asyncio.create_subprocess_exec(
-                    "git", "pull", "origin", "main",
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    cwd=script_dir
-                )
-                await proc_pull.communicate()
-
-                # 4. Notify admin in Telegram
-                try:
-                    admin_id = int(os.getenv("ADMIN_CHAT_ID", "0"))
-                    if admin_id:
-                        lang = marks.get_user_lang(admin_id)
-                        notify_txt = (
-                            "🎉 <b>Bot avtomatik tarzda eng so'nggi versiyaga yangilandi!</b>\n\n"
-                            "🚀 Yangi imkoniyatlar va yaxshilanishlar faollashtirildi."
-                            if lang == "uz" else
-                            "🎉 <b>Бот автоматически обновлён до последней версии!</b>\n\n"
-                            "🚀 Новые возможности и улучшения уже активны."
-                        )
-                        await bot.send_message(admin_id, notify_txt, parse_mode="HTML")
-                except Exception:
-                    pass
-
-                # 5. Restart process
-                await asyncio.sleep(1)
-                os._exit(0)
-        except Exception:
-            await asyncio.sleep(60)
-
-async def main():
-    marks.init_db()
-    try:
-        await refresh_cache()
-    except Exception as e:
-        print(f"Не удалось прогреть кэш на старте: {e}")
-    asyncio.create_task(check_updates())
-    asyncio.create_task(daily_morning_sync())
-    await dp.start_polling(bot)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        await wait_msg.edit_text(f"⚠️ Yangilashda xatolik: {e}")
