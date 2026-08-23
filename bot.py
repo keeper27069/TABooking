@@ -1047,6 +1047,65 @@ async def update_command(message: Message):
         m = await message.answer(f"⚠️ Yangilashda xatolik: {e}")
         remember_message(user_id, m.message_id)
 
+
+async def auto_updater_loop(bot: Bot):
+    """Har 15 daqiqada GitHub'dan yangilanishlarni tekshiradi va avtomatik o'rnatadi"""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    git_dir = os.path.join(script_dir, ".git")
+    if not os.path.exists(git_dir):
+        return
+
+    while True:
+        try:
+            await asyncio.sleep(900)  # Har 15 daqiqa
+            # 1. Fetch
+            proc_fetch = await asyncio.create_subprocess_exec(
+                "git", "fetch", "origin", "main",
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                cwd=script_dir
+            )
+            await proc_fetch.communicate()
+
+            # 2. Status
+            proc_status = await asyncio.create_subprocess_exec(
+                "git", "status", "-uno",
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                cwd=script_dir
+            )
+            stdout, _ = await proc_status.communicate()
+            status_text = stdout.decode("utf-8", errors="ignore")
+
+            if "Your branch is behind" in status_text or "behind" in status_text:
+                # 3. Pull
+                proc_pull = await asyncio.create_subprocess_exec(
+                    "git", "pull", "origin", "main",
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    cwd=script_dir
+                )
+                await proc_pull.communicate()
+
+                # 4. Notify admin in Telegram
+                try:
+                    admin_id = int(os.getenv("ADMIN_CHAT_ID", "0"))
+                    if admin_id:
+                        lang = marks.get_user_lang(admin_id)
+                        notify_txt = (
+                            "🎉 <b>Bot avtomatik tarzda eng so'nggi versiyaga yangilandi!</b>\n\n"
+                            "🚀 Yangi imkoniyatlar va yaxshilanishlar faollashtirildi."
+                            if lang == "uz" else
+                            "🎉 <b>Бот автоматически обновлён до последней версии!</b>\n\n"
+                            "🚀 Новые возможности и улучшения уже активны."
+                        )
+                        await bot.send_message(admin_id, notify_txt, parse_mode="HTML")
+                except Exception:
+                    pass
+
+                # 5. Restart process
+                await asyncio.sleep(1)
+                os._exit(0)
+        except Exception:
+            await asyncio.sleep(60)
+
 async def main():
     marks.init_db()
     try:
