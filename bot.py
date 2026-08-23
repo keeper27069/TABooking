@@ -249,6 +249,18 @@ async def start(message: Message):
 
 
 # --- Хэндлер "Hozirgi dars" (Текущий урок прямо сейчас) ---
+
+@dp.callback_query(lambda c: c.data == "show_current_lesson")
+async def current_lesson_cb(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    await show_current_lesson(callback, user_id)
+
+
+@dp.message(lambda m: m.text in ("⚡️ Hozirgi dars", "⚡️ Текущий урок", "/now", "/current"))
+async def current_lesson_msg(message: Message):
+    user_id = message.from_user.id
+    await show_current_lesson(message, user_id)
+
 async def show_current_lesson(target_message: Message | CallbackQuery, user_id: int):
     lang = marks.get_user_lang(user_id)
     timeline = await get_today_timeline()
