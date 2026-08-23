@@ -1,4 +1,7 @@
 from __future__ import annotations
+import os
+import subprocess
+import sys
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
@@ -1016,24 +1019,26 @@ async def daily_morning_sync():
 
 @dp.message(Command("update"))
 async def update_command(message: Message):
+    import os, subprocess, asyncio
     user_id = message.from_user.id
     lang = marks.get_user_lang(user_id)
     wait_msg = await message.answer("🔄 Yangilanishlar yuklanmoqda... / Загрузка обновлений...")
     remember_message(user_id, wait_msg.message_id)
 
     try:
-        import subprocess
+        script_dir = os.path.dirname(os.path.abspath(__file__))
         proc = await asyncio.create_subprocess_exec(
             "bash", "update.sh",
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd=os.path.dirname(os.path.abspath(__file__))
+            cwd=script_dir
         )
         stdout, stderr = await proc.communicate()
-        res_text = stdout.decode("utf-8", errors="ignore")
+        res_text = stdout.decode("utf-8", errors="ignore").strip()
         
+        success_title = "✅ <b>Bot muvaffaqiyatli yangilandi! / Бот успешно обновлён!</b>"
         m = await message.answer(
-            f"✅ <b>Bot yangilandi! / Бот обновлен!</b>\n\n<code>{res_text[:300]}</code>",
+            f"{success_title}\n\n<code>{res_text[:400]}</code>",
             parse_mode="HTML",
             reply_markup=persistent_menu(lang)
         )
