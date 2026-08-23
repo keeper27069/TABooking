@@ -150,37 +150,41 @@ def person_card_text(b: dict, mark: dict | None, lang: str = "uz", custom_header
     phone_clean = re.sub(r"\D", "", b.get("phone", ""))
     phone_display = f"+{phone_clean}" if phone_clean else t("not_specified", lang)
 
+    lesson_val = b.get("lesson") or "—"
+    status_val = b.get("status") or "—"
+
     lines = [
         f"{header}\n",
-        f"👤 {b['student']}",
-        f"📞 {phone_display}",
+        f"👤 <b>{t('student', lang)}:</b> {b.get('student', '—')}",
+        f"📞 <b>{t('phone', lang)}:</b> {phone_display}",
     ]
     if b.get("tg"):
-        lines.append(f"💬 {b['tg']}")
+        lines.append(f"💬 <b>Telegram:</b> {b['tg']}")
 
-    lines.append(f"👥 {b['group']}\n")
+    lines.append(f"👥 <b>{t('group', lang)}:</b> {b.get('group', '—')}\n")
 
     if is_demo:
-        lines.append(f"📚 {b.get('lesson', '—')}")
+        lines.append(f"📚 <b>{t('lesson', lang)} (Modul):</b> <b>{lesson_val}</b>")
         if b.get("task"):
-            lines.append(f"📝 {t('task', lang)}: {b['task']}")
+            lines.append(f"📝 <b>{t('task', lang)}:</b> {b['task']}")
         if b.get("mentor"):
-            lines.append(f"👨 {t('mentor', lang)}: {b['mentor']}")
+            lines.append(f"👨 <b>{t('mentor', lang)}:</b> {b['mentor']}")
         if b.get("admin"):
-            lines.append(f"👩 {t('curator', lang)}: {b['admin']}")
+            lines.append(f"👩 <b>{t('curator', lang)}:</b> {b['admin']}")
     else:
+        lines.append(f"📚 <b>{t('lesson', lang)}:</b> <b>{lesson_val}</b>")
         if b.get("admin"):
-            lines.append(f"👨 {t('admin', lang)}: {b['admin']}")
+            lines.append(f"👨 <b>{t('admin', lang)}:</b> {b['admin']}")
         if b.get("mentor"):
-            lines.append(f"👨 {t('mentor', lang)}: {b['mentor']}")
-        lines.append(f"📚 {b.get('lesson', '—')}")
+            lines.append(f"👨 <b>{t('mentor', lang)}:</b> {b['mentor']}")
 
-    lines.append(f"\n📅 {date_part}")
-    lines.append(f"🕒 {time_part}\n")
-    lines.append(f"📌 {status_icon(b.get('status', ''))} {b.get('status', '')}\n")
+    lines.append(f"\n📅 <b>{t('date', lang)}:</b> {date_part}")
+    lines.append(f"🕒 <b>{t('time', lang)}:</b> {time_part}\n")
+    lines.append(f"📌 <b>{t('status', lang)}:</b> {status_icon(status_val)} {status_val}\n")
     lines.append(f"{mark_line(mark, lang)}")
 
     return "\n".join(lines)
+
 
 
 async def send_notification(text_builder, key: str, b: dict):
