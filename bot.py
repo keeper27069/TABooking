@@ -276,12 +276,13 @@ async def show_current_lesson(target_message: Message | CallbackQuery, user_id: 
             remember_message(user_id, m.message_id)
         return
 
-    # Отбираем только не завершенные уроки (НЕ KELDI, НЕ KELMADI, НЕ BEKOR)
+    # 1. Отбираем не отмеченные уроки (НЕ KELDI, НЕ KELMADI, НЕ BEKOR)
     pending_lessons = [
         b for b in timeline
         if (b.get("status") or "").upper() not in ("KELDI", "KELMADI", "BEKOR QILINGAN", "RAD ETILGAN")
     ]
 
+    # Если все уроки уже завершены (все KELDI/KELMADI)
     if not pending_lessons:
         text = t("no_more_lessons", lang)
         if isinstance(target_message, CallbackQuery):
@@ -292,9 +293,9 @@ async def show_current_lesson(target_message: Message | CallbackQuery, user_id: 
             remember_message(user_id, m.message_id)
         return
 
-    # Логика:
-    # 1. Текущий урок (HOZIR): если начался не более 10 минут назад или начнется в течение 5 минут (-10 <= diff <= 5)
-    # 2. Если прошло больше 10 минут и ученик не зашел -> переключаемся на СЛЕДУЮЩИЙ ближайший урок (diff > 0)
+    # 2. Ищем:
+    # - ongoing_b: урок, который идет прямо сейчас (-10 <= diff <= 5)
+    # - next_b: ближайший следующий урок в будущем (diff > 0)
     ongoing_b = None
     next_b = None
     next_diff = 999999
@@ -310,18 +311,11 @@ async def show_current_lesson(target_message: Message | CallbackQuery, user_id: 
             next_b = b
             next_diff = diff
 
-    # Приоритет: текущий -> следующий предстоящий -> если все предстоящие завершены, последний из списка
-    active_booking = ongoing_b or next_b
-
-    if not active_booking:
-        text = t("no_more_lessons", lang)
-        if isinstance(target_message, CallbackQuery):
-            await target_message.answer()
-            await target_message.message.edit_text(text, reply_markup=main_menu(lang=lang))
-        else:
-            m = await target_message.answer(text, reply_markup=main_menu(lang=lang))
-            remember_message(user_id, m.message_id)
-        return
+    # Приоритет:
+    # 1. Текущий урок (начался <= 10 мин назад или начнется <= 5 мин)
+    # 2. Следующий предстоящий урок сегодня
+    # 3. Если все предстоящие прошли (например вечер), берем последний ожидающий урок
+    active_booking = ongoing_b or next_b or pending_lessons[0]
 
     dt = _booking_dt(active_booking)
     diff = (dt - now).total_seconds() / 60.0 if dt != datetime.max else 9999
