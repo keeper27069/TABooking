@@ -368,88 +368,122 @@ if __name__ == "__main__":
         print(f"  {i}. {b['student']}{phone_s} ({b['group']}) - {b['lesson']} @ {b['booking']} [{b['status']}]")
 
 
+
 async def fetch_crm_analytics(d_from: str, d_to: str) -> dict:
-    """Hisoblaydi: Tanlangan davr (kun, hafta, oy) bo'yicha haqiqiy jonli CRM analitikasi"""
-    import asyncio, requests
-    from bs4 import BeautifulSoup
-    from config import COOKIE
-    
-    def _fetch_sync():
-        headers = {
-            "Cookie": COOKIE,
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-        }
-        
-        # 1. Demo Day
-        url_demo = f"https://crm.junior-it.uz/account/demo_day/list?date_from={d_from}&date_to={d_to}"
-        try:
-            r_demo = requests.get(url_demo, headers=headers, timeout=15)
-            soup_demo = BeautifulSoup(r_demo.text, "html.parser")
-            demo_rows = soup_demo.find("table").find_all("tr")[1:] if soup_demo.find("table") else []
-        except Exception:
-            demo_rows = []
+    """Извлекает официальную аналитику и процент явки 1-в-1 из карточки CRM (/account/ta_booking_analytics/list)"""
+    temp_dir = f"/tmp/chrome_analytics_{d_from}_{d_to}"
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    os.makedirs(os.path.join(temp_dir, "Default"), exist_ok=True)
 
-        # 2. TA Bookings
-        url_ta = f"https://crm.junior-it.uz/account/ta_booking_requests/list?date_from={d_from}&date_to={d_to}&length=100"
-        try:
-            r_ta = requests.get(url_ta, headers=headers, timeout=15)
-            soup_ta = BeautifulSoup(r_ta.text, "html.parser")
-            ta_rows = soup_ta.find("table").find_all("tr")[1:] if soup_ta.find("table") else []
-        except Exception:
-            ta_rows = []
+    src_state = os.path.expanduser("~/Library/Application Support/Google/Chrome/Local State")
+    if os.path.exists(src_state):
+        shutil.copy2(src_state, os.path.join(temp_dir, "Local State"))
+    src_cookies = os.path.expanduser("~/Library/Application Support/Google/Chrome/Default/Cookies")
+    if os.path.exists(src_cookies):
+        shutil.copy2(src_cookies, os.path.join(temp_dir, "Default", "Cookies"))
 
-        all_items = []
-        lesson_counts = {}
+    chrome_bin = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    proc = subprocess.Popen([
+        chrome_bin,
+        "--headless=new",
+        "--remote-debugging-port=9241",
+        f"--user-data-dir={temp_dir}",
+        "--disable-gpu",
+        "--no-first-run",
+        "https://crm.junior-it.uz/account/ta_booking_analytics/list"
+    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        for tr in demo_rows:
-            tds = [td.get_text(strip=True) for td in tr.find_all("td")]
-            if len(tds) >= 10:
-                st = tds[9].upper().strip()
-                lesson = tds[5]
-                mentor = tds[4]
-                all_items.append({"type": "Demo", "status": st, "lesson": lesson, "mentor": mentor})
-                if "KELDI" in st and lesson and lesson not in ("—", "-"):
-                    clean_l = lesson.replace("CSSCSS", "CSS").replace("JavascriptJavascript", "Javascript").replace("BootstrapBootstrap", "Bootstrap")
-                    lesson_counts[clean_l] = lesson_counts.get(clean_l, 0) + 1
+    try:
+        await asyncio.sleep(2.5)
+        req = urllib.request.urlopen("http://127.0.0.1:9241/json")
+        targets = json.loads(req.read().decode())
+        page_target = [t for t in targets if "junior-it.uz" in t.get("url", "")][0]
 
-        for tr in ta_rows:
-            tds = [td.get_text(strip=True) for td in tr.find_all("td")]
-            if len(tds) >= 10:
-                st = tds[9].upper().strip()
-                lesson = tds[5]
-                mentor = tds[4]
-                all_items.append({"type": "TA", "status": st, "lesson": lesson, "mentor": mentor})
-                if "KELDI" in st and lesson and lesson not in ("—", "-"):
-                    clean_l = lesson.replace("CSSCSS", "CSS").replace("JavascriptJavascript", "Javascript").replace("BootstrapBootstrap", "Bootstrap")
-                    lesson_counts[clean_l] = lesson_counts.get(clean_l, 0) + 1
+        ws_url = page_target["webSocketDebuggerUrl"]
+        import websockets
+        async with websockets.connect(ws_url) as ws:
+            await ws.send(json.dumps({"id": 1, "method": "Page.enable"}))
+            await ws.recv()
+            await ws.send(json.dumps({"id": 2, "method": "Runtime.enable"}))
+            await ws.recv()
 
-        total = len(all_items)
-        keldi = sum(1 for x in all_items if "KELDI" in x["status"])
-        kelmadi = sum(1 for x in all_items if any(k in x["status"] for k in ["KELMADI", "BEKOR", "RAD"]))
-        waiting = sum(1 for x in all_items if any(k in x["status"] for k in ["TASDIQ", "YANGI"]))
-        
-        finished = keldi + kelmadi
-        percent_finished = (keldi / finished * 100) if finished > 0 else 0
-        percent_total = (keldi / total * 100) if total > 0 else 0
+            js_submit = f"""
+            (() => {{
+                document.querySelector("input[name='tba_date_from']").value = "{d_from}";
+                document.querySelector("input[name='tba_date_to']").value = "{d_to}";
+                document.querySelector("button[type='submit']").click();
+            }})()
+            """
+            await ws.send(json.dumps({"id": 3, "method": "Runtime.evaluate", "params": {"expression": js_submit}}))
 
-        mentor_name = all_items[0]["mentor"] if all_items else "Zafar Normurodov"
+            for _ in range(40):
+                msg = json.loads(await ws.recv())
+                if msg.get("method") == "Page.loadEventFired":
+                    break
 
-        top_lessons = sorted(lesson_counts.items(), key=lambda x: x[1], reverse=True)[:5]
-        top_list = []
-        for num, (l_name, cnt) in enumerate(top_lessons, 1):
-            pct = (cnt / keldi * 100) if keldi > 0 else 0
-            top_list.append({"num": f"{num:02d}", "lesson": l_name, "count": str(cnt), "percent": f"{pct:.1f}%"})
+            await asyncio.sleep(0.8)
 
-        return {
-            "date_from": d_from,
-            "date_to": d_to,
-            "mentor": mentor_name,
-            "yaratilgan": str(total),
-            "kelgan": str(keldi),
-            "kelmadi": str(kelmadi),
-            "kutilmoqda": str(waiting),
-            "foiz": f"{percent_finished:.1f}%" if finished > 0 else f"{percent_total:.1f}%",
-            "top_lessons": top_list,
-        }
+            js_extract = """
+            (() => {
+                const text = document.body.innerText;
+                const rows = [];
+                document.querySelectorAll("table tr").forEach(tr => {
+                    const tds = Array.from(tr.querySelectorAll("td")).map(td => td.innerText.trim());
+                    if (tds.length >= 4 && /^\d+$/.test(tds[0])) {
+                        rows.push({
+                            num: tds[0],
+                            lesson: tds[1] || '',
+                            course: tds[2] || '',
+                            count: tds[3] || '',
+                            percent: tds[4] || ''
+                        });
+                    }
+                });
+                return JSON.stringify({ text, rows });
+            })()
+            """
+            await ws.send(json.dumps({"id": 4, "method": "Runtime.evaluate", "params": {"expression": js_extract}}))
 
-    return await asyncio.to_thread(_fetch_sync)
+            while True:
+                msg = json.loads(await ws.recv())
+                if msg.get("id") == 4:
+                    raw_json = msg.get("result", {}).get("result", {}).get("value", "{}")
+                    break
+
+            payload = json.loads(raw_json)
+            lines = [l.strip() for l in payload.get("text", "").split("\n") if l.strip()]
+            data = {
+                "date_from": d_from,
+                "date_to": d_to,
+                "mentor": "",
+                "kutilmoqda": "0",
+                "yaratilgan": "0",
+                "kelgan": "0",
+                "kelmadi": "0",
+                "rad_etilgan": "0",
+                "foiz": "0%",
+                "top_lessons": payload.get("rows", [])
+            }
+
+            for i, line in enumerate(lines):
+                if line == "Kutilmoqda" and i + 1 < len(lines):
+                    data["kutilmoqda"] = lines[i+1]
+                    if i > 0 and not any(x in lines[i-1] for x in ["Analitika", "Menyu", "Filtr"]):
+                        data["mentor"] = lines[i-1]
+                elif line == "Yaratilgan" and i + 1 < len(lines):
+                    data["yaratilgan"] = lines[i+1]
+                elif line == "Kelgan" and i + 1 < len(lines):
+                    data["kelgan"] = lines[i+1]
+                elif line == "Kelmadi" and i + 1 < len(lines):
+                    data["kelmadi"] = lines[i+1]
+                elif line == "Rad etilgan" and i + 1 < len(lines):
+                    data["rad_etilgan"] = lines[i+1]
+                elif line == "Foiz" and i + 1 < len(lines):
+                    data["foiz"] = lines[i+1]
+            return data
+    except Exception as e:
+        print(f"Error fetching analytics: {e}")
+        return {}
+    finally:
+        proc.terminate()
