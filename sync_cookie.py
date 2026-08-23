@@ -1,3 +1,4 @@
+from __future__ import annotations
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
@@ -35,64 +36,91 @@ def log(msg: str):
 
 
 async def extract_fresh_cookie() -> str | None:
-    temp_dir = "/tmp/chrome_morning_cookie_sync"
-    if os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir)
-    os.makedirs(os.path.join(temp_dir, "Default"), exist_ok=True)
+    chrome_base = os.path.expanduser("~/Library/Application Support/Google/Chrome")
+    if not os.path.exists(chrome_base):
+        log("❌ Папка Google Chrome не найдена в ~/Library/Application Support/Google/Chrome")
+        return None
 
-    src_state = os.path.expanduser("~/Library/Application Support/Google/Chrome/Local State")
-    if os.path.exists(src_state):
-        shutil.copy2(src_state, os.path.join(temp_dir, "Local State"))
+    # Поиск всех возможных профилей Chrome (Default, Profile 1, Profile 2, etc.)
+    profiles = ["Default"]
+    for item in os.listdir(chrome_base):
+        if item.startswith("Profile ") and os.path.isdir(os.path.join(chrome_base, item)):
+            profiles.append(item)
 
-    src_cookies = os.path.expanduser("~/Library/Application Support/Google/Chrome/Default/Cookies")
-    if os.path.exists(src_cookies):
-        shutil.copy2(src_cookies, os.path.join(temp_dir, "Default", "Cookies"))
+    for prof in profiles:
+        prof_cookies = os.path.join(chrome_base, prof, "Cookies")
+        if not os.path.exists(prof_cookies):
+            continue
 
-    chrome_bin = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    proc = subprocess.Popen([
-        chrome_bin,
-        "--headless=new",
-        "--remote-debugging-port=9226",
-        f"--user-data-dir={temp_dir}",
-        "--disable-gpu",
-        "--no-first-run",
-        "https://crm.junior-it.uz/account/ta_booking_requests/list?length=50"
-    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        temp_dir = f"/tmp/chrome_cookie_sync_{prof.replace(' ', '_')}"
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        os.makedirs(os.path.join(temp_dir, "Default"), exist_ok=True)
 
-    try:
-        await asyncio.sleep(2.5)
-        req = urllib.request.urlopen("http://127.0.0.1:9226/json")
-        targets = json.loads(req.read().decode())
-        page_target = None
-        for t in targets:
-            if "junior-it.uz" in t.get("url", ""):
-                page_target = t
-                break
+        src_state = os.path.join(chrome_base, "Local State")
+        if os.path.exists(src_state):
+            shutil.copy2(src_state, os.path.join(temp_dir, "Local State"))
 
-        if not page_target:
+        shutil.copy2(prof_cookies, os.path.join(temp_dir, "Default", "Cookies"))
+
+        chrome_bin = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        if not os.path.exists(chrome_bin):
+            log("❌ Google Chrome не установлен в /Applications")
             return None
 
-        import websockets
-        ws_url = page_target["webSocketDebuggerUrl"]
-        async with websockets.connect(ws_url) as ws:
-            await ws.send(json.dumps({
-                "id": 1,
-                "method": "Network.getCookies",
-                "params": {"urls": ["https://crm.junior-it.uz/account/ta_booking_requests/list", "https://junior-it.uz"]}
-            }))
-            res = await ws.recv()
-            cookies_list = json.loads(res).get("result", {}).get("cookies", [])
+        port = 9228
+        proc = subprocess.Popen([
+            chrome_bin,
+            "--headless=new",
+            f"--remote-debugging-port={port}",
+            f"--user-data-dir={temp_dir}",
+            "--disable-gpu",
+            "--no-first-run",
+            "https://crm.junior-it.uz/account/ta_booking_requests/list?length=50"
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-            cookie_dict = {}
-            for c in cookies_list:
-                cookie_dict[c["name"]] = c["value"]
+        try:
+            await asyncio.sleep(2.5)
+            req = urllib.request.urlopen(f"http://127.0.0.1:{port}/json")
+            targets = json.loads(req.read().decode())
+            page_target = None
+            for t in targets:
+                if "junior-it.uz" in t.get("url", ""):
+                    page_target = t
+                    break
 
-            if "PHPSESSID" in cookie_dict:
-                return "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
-    except Exception as e:
-        log(f"Ошибка извлечения cookie через CDP: {e}")
-    finally:
-        proc.terminate()
+            if page_target:
+                import websockets
+                ws_url = page_target["webSocketDebuggerUrl"]
+                async with websockets.connect(ws_url) as ws:
+                    await ws.send(json.dumps({
+                        "id": 1,
+                        "method": "Network.getCookies",
+                        "params": {"urls": ["https://crm.junior-it.uz/account/ta_booking_requests/list", "https://junior-it.uz"]}
+                    }))
+                    res = await ws.recv()
+                    cookies_list = json.loads(res).get("result", {}).get("cookies", [])
+
+                    cookie_dict = {}
+                    for c in cookies_list:
+                        cookie_dict[c["name"]] = c["value"]
+
+                    if "PHPSESSID" in cookie_dict:
+                        cookie_str = "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
+                        # Check if valid session
+                        test_headers = {"Cookie": cookie_str, "User-Agent": "Mozilla/5.0"}
+                        try:
+                            r = requests.get("https://crm.junior-it.uz/account/ta_booking_requests/list?length=10", headers=test_headers, timeout=10)
+                            if r.status_code == 200 and "login" not in r.url.lower():
+                                log(f"✅ Успешно извлечён активный Cookie из профиля '{prof}'!")
+                                return cookie_str
+                        except Exception:
+                            pass
+        except Exception as e:
+            log(f"Ошибка проверки профиля '{prof}': {e}")
+        finally:
+            proc.terminate()
+
     return None
 
 

@@ -10,7 +10,7 @@ cd "$DIR"
 
 # 1. Python tekshiruvi
 if ! command -v python3 &> /dev/null; then
-    echo "❌ Python3 topilmadi! Iltimos, Python 3 o'rnating."
+    echo "❌ Python3 topilmadi! Iltimos, https://www.python.org saytidan Python 3 o'rnating."
     exit 1
 fi
 
@@ -20,7 +20,7 @@ if [ ! -d ".venv" ]; then
     python3 -m venv .venv
 fi
 
-echo "📦 Kutubxonalar o'rnatilmoqda..."
+echo "📦 Kerakli kutubxonalar o'rnatilmoqda..."
 .venv/bin/pip install --upgrade pip -q
 .venv/bin/pip install -r requirements.txt -q
 
@@ -30,22 +30,38 @@ if [ ! -f ".env" ]; then
     cp .env.example .env
 fi
 
-# 4. Foydalanuvchining o'z Chrome brauzeridan cookie ni tortib olish
-echo "🔄 Chrome brauzeringizdan shaxsiy LMS sessiyasi (Cookie) olinmoqda..."
+# 4. Telegram Bot Token & Admin Chat ID tekshiruvi
+CURRENT_TOKEN=$(grep -E "^BOT_TOKEN=" .env | cut -d '=' -f2- | tr -d ' "')
+if [ -z "$CURRENT_TOKEN" ] || [ "$CURRENT_TOKEN" = "YOUR_TELEGRAM_BOT_TOKEN_HERE" ]; then
+    echo ""
+    echo "🔑 1. Telegram Bot Tokeningizni kiriting (@BotFather dan olingan):"
+    read -r USER_BOT_TOKEN
+    if [ -n "$USER_BOT_TOKEN" ]; then
+        sed -i '' "s|^BOT_TOKEN=.*|BOT_TOKEN=$USER_BOT_TOKEN|" .env
+    fi
+
+    echo "🆔 2. O'zingizning Telegram Chat ID ingizni kiriting (@userinfobot dan):"
+    read -r USER_CHAT_ID
+    if [ -n "$USER_CHAT_ID" ]; then
+        sed -i '' "s|^ADMIN_CHAT_ID=.*|ADMIN_CHAT_ID=$USER_CHAT_ID|" .env
+    fi
+fi
+
+# 5. Chrome brauzerdan Cookie ni avtomatik olish
+echo "🔄 Google Chrome brauzeridan LMS (CRM) sessiyangiz olinmoqda..."
 .venv/bin/python sync_cookie.py || true
 
-# 5. launchd servislarini sozlash (24/7 avtostart va 08:00 cookie yangilash)
+# 6. launchd servislarini sozlash (24/7 avtostart va 08:00 cookie yangilash)
 LAUNCH_DIR="$HOME/Library/LaunchAgents"
 mkdir -p "$LAUNCH_DIR"
 
-# Bot demoni
-cat << PLIST > "$LAUNCH_DIR/com.zafar.tabooking.plist"
+cat << PLIST > "$LAUNCH_DIR/com.tabooking.bot.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.zafar.tabooking</string>
+    <string>com.tabooking.bot</string>
     <key>ProgramArguments</key>
     <array>
         <string>$DIR/.venv/bin/python</string>
@@ -70,14 +86,13 @@ cat << PLIST > "$LAUNCH_DIR/com.zafar.tabooking.plist"
 </plist>
 PLIST
 
-# 08:00 Cookie avtosinxronizatori
-cat << PLIST > "$LAUNCH_DIR/com.zafar.tabooking.cookiesync.plist"
+cat << PLIST > "$LAUNCH_DIR/com.tabooking.cookiesync.plist"
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.zafar.tabooking.cookiesync</string>
+    <string>com.tabooking.cookiesync</string>
     <key>ProgramArguments</key>
     <array>
         <string>$DIR/.venv/bin/python</string>
@@ -100,14 +115,14 @@ cat << PLIST > "$LAUNCH_DIR/com.zafar.tabooking.cookiesync.plist"
 </plist>
 PLIST
 
-# Servislarni yuklash
-launchctl unload "$LAUNCH_DIR/com.zafar.tabooking.plist" 2>/dev/null || true
-launchctl unload "$LAUNCH_DIR/com.zafar.tabooking.cookiesync.plist" 2>/dev/null || true
-launchctl load -w "$LAUNCH_DIR/com.zafar.tabooking.plist"
-launchctl load -w "$LAUNCH_DIR/com.zafar.tabooking.cookiesync.plist"
+# Servislarni ishga tushirish
+launchctl unload "$LAUNCH_DIR/com.tabooking.bot.plist" 2>/dev/null || true
+launchctl unload "$LAUNCH_DIR/com.tabooking.cookiesync.plist" 2>/dev/null || true
+launchctl load -w "$LAUNCH_DIR/com.tabooking.bot.plist"
+launchctl load -w "$LAUNCH_DIR/com.tabooking.cookiesync.plist"
 
 echo "=================================================="
 echo "✅ Barcha sozlamalar muvaffaqiyatli yakunlandi!"
-echo "🤖 Bot 24/7 rejimda avtomatik ishga tushdi."
+echo "🤖 Bot 24/7 fonda ishlamoqda."
 echo "📱 Endi Telegramda botingizga kiring va /start bosing."
 echo "=================================================="
