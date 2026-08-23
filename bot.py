@@ -810,10 +810,10 @@ async def report_week_cb(callback: CallbackQuery):
 
     now = datetime.now()
     mon = now - timedelta(days=now.weekday())
-    sat = mon + timedelta(days=5)
+    today = now
 
     from crm import fetch_crm_analytics
-    data = await fetch_crm_analytics(mon.strftime("%Y-%m-%d"), sat.strftime("%Y-%m-%d"))
+    data = await fetch_crm_analytics(mon.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d"))
     report_text = format_crm_report(data, lang=lang)
 
     await callback.message.edit_text(
