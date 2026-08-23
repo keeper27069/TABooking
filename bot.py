@@ -734,17 +734,42 @@ async def notify_mark_handler(callback: CallbackQuery):
         await callback.answer()
 
 
-def build_report_text(date_from: datetime, date_to: datetime, lang: str = "uz") -> str:
-    r = marks.report(date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d"))
-    return (
-        f"{t('report', lang)}\n"
-        f"{date_from.strftime('%d.%m.%Y')} – {date_to.strftime('%d.%m.%Y')}\n\n"
-        f"{t('report_demos', lang)}: {r['demos']}\n"
-        f"   {t('report_pass', lang)}: {r['demos_pass']}\n"
-        f"   {t('report_fail', lang)}: {r['demos_fail']}\n"
-        f"   {t('report_unknown', lang)}: {r['demos_unknown']}\n\n"
-        f"{t('report_extras', lang)}: {r['extras']}"
+def format_crm_report(data: dict, lang: str = "uz") -> str:
+    if not data:
+        return f"⚠️ {t('empty_section', lang, title='Analitika')}"
+
+    try:
+        d_from_dt = datetime.strptime(data["date_from"], "%Y-%m-%d")
+        d_to_dt = datetime.strptime(data["date_to"], "%Y-%m-%d")
+        if data["date_from"] != data["date_to"]:
+            period_str = f"{d_from_dt.strftime('%d.%m.%Y')} — {d_to_dt.strftime('%d.%m.%Y')}"
+        else:
+            period_str = d_from_dt.strftime('%d.%m.%Y')
+    except Exception:
+        period_str = f"{data.get('date_from', '')} — {data.get('date_to', '')}"
+
+    mentor_str = data.get("mentor") or "—"
+    base_text = t(
+        "report_analytics_header",
+        lang,
+        period=period_str,
+        mentor=mentor_str,
+        foiz=data.get("foiz", "0%"),
+        yaratilgan=data.get("yaratilgan", "0"),
+        kelgan=data.get("kelgan", "0"),
+        kelmadi=data.get("kelmadi", "0"),
+        kutilmoqda=data.get("kutilmoqda", "0"),
+        rad_etilgan=data.get("rad_etilgan", "0"),
     )
+
+    top_lessons = data.get("top_lessons") or []
+    if top_lessons:
+        base_text += t("report_top_lessons_title", lang)
+        for item in top_lessons[:5]:
+            count_unit = "ta" if lang == "uz" else "уроков"
+            base_text += f"\n• <b>{item['lesson']}</b> — {item['count']} {count_unit} ({item['percent']})"
+
+    return base_text
 
 
 @dp.callback_query(lambda c: c.data == "report_menu")
@@ -755,18 +780,67 @@ async def report_menu_cb(callback: CallbackQuery):
     await callback.message.edit_text(
         t("report_intro", lang),
         reply_markup=report_menu(lang=lang),
+        parse_mode="HTML"
     )
 
 
-@dp.callback_query(lambda c: c.data in ("report_7", "report_30"))
-async def report_quick_cb(callback: CallbackQuery):
+@dp.callback_query(lambda c: c.data == "rep_today")
+async def report_today_cb(callback: CallbackQuery):
     user_id = callback.from_user.id
     lang = marks.get_user_lang(user_id)
-    await callback.answer()
-    days = 7 if callback.data == "report_7" else 30
+    await callback.answer("⏳...")
+    
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    from crm import fetch_crm_analytics
+    data = await fetch_crm_analytics(today_str, today_str)
+    report_text = format_crm_report(data, lang=lang)
+    
+    await callback.message.edit_text(
+        report_text,
+        reply_markup=report_menu(lang=lang),
+        parse_mode="HTML"
+    )
+
+
+@dp.callback_query(lambda c: c.data == "rep_week")
+async def report_week_cb(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    lang = marks.get_user_lang(user_id)
+    await callback.answer("⏳...")
+
+    now = datetime.now()
+    mon = now - timedelta(days=now.weekday())
+    sat = mon + timedelta(days=5)
+
+    from crm import fetch_crm_analytics
+    data = await fetch_crm_analytics(mon.strftime("%Y-%m-%d"), sat.strftime("%Y-%m-%d"))
+    report_text = format_crm_report(data, lang=lang)
+
+    await callback.message.edit_text(
+        report_text,
+        reply_markup=report_menu(lang=lang),
+        parse_mode="HTML"
+    )
+
+
+@dp.callback_query(lambda c: c.data == "rep_30")
+async def report_30_cb(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    lang = marks.get_user_lang(user_id)
+    await callback.answer("⏳...")
+
     date_to = datetime.now()
-    date_from = date_to - timedelta(days=days - 1)
-    await callback.message.edit_text(build_report_text(date_from, date_to, lang=lang), reply_markup=report_menu(lang=lang))
+    date_from = date_to - timedelta(days=29)
+
+    from crm import fetch_crm_analytics
+    data = await fetch_crm_analytics(date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d"))
+    report_text = format_crm_report(data, lang=lang)
+
+    await callback.message.edit_text(
+        report_text,
+        reply_markup=report_menu(lang=lang),
+        parse_mode="HTML"
+    )
 
 
 @dp.message(Command("report"))
@@ -776,25 +850,35 @@ async def report_command(message: Message):
     lang = marks.get_user_lang(user_id)
 
     if len(parts) == 1:
-        date_to = datetime.now()
-        date_from = date_to - timedelta(days=6)
+        m = await message.answer(
+            t("report_intro", lang),
+            reply_markup=report_menu(lang=lang),
+            parse_mode="HTML"
+        )
+        remember_message(user_id, m.message_id)
+        return
     elif len(parts) == 3:
         try:
             date_from = datetime.strptime(parts[1], "%d.%m.%Y")
             date_to = datetime.strptime(parts[2], "%d.%m.%Y")
         except ValueError:
-            m = await message.answer("⚠️ Format: /report 01.07.2026 07.07.2026")
+            m = await message.answer("⚠️ Format: /report 17.08.2026 22.08.2026")
             remember_message(user_id, m.message_id)
             return
         if date_from > date_to:
             date_from, date_to = date_to, date_from
     else:
-        m = await message.answer("⚠️ Format: /report 01.07.2026 07.07.2026")
+        m = await message.answer("⚠️ Format: /report 17.08.2026 22.08.2026")
         remember_message(user_id, m.message_id)
         return
 
-    m = await message.answer(build_report_text(date_from, date_to, lang=lang))
-    remember_message(user_id, m.message_id)
+    wait_m = await message.answer("⏳...")
+    from crm import fetch_crm_analytics
+    data = await fetch_crm_analytics(date_from.strftime("%Y-%m-%d"), date_to.strftime("%Y-%m-%d"))
+    report_text = format_crm_report(data, lang=lang)
+
+    await wait_m.edit_text(report_text, reply_markup=report_menu(lang=lang), parse_mode="HTML")
+    remember_message(user_id, wait_m.message_id)
 
 
 # --- Фоновая проверка изменений и автоматические напоминания за 5 минут ---

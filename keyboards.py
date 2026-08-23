@@ -39,10 +39,11 @@ def language_keyboard() -> InlineKeyboardMarkup:
 
 def report_menu(lang: str = "uz") -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text=t("report_7", lang), callback_data="report_7")
-    builder.button(text=t("report_30", lang), callback_data="report_30")
+    builder.button(text=t("report_today_btn", lang), callback_data="rep_today")
+    builder.button(text=t("report_week_btn", lang), callback_data="rep_week")
+    builder.button(text=t("report_30_btn", lang), callback_data="rep_30")
     builder.button(text=t("back_to_menu", lang), callback_data="to_menu")
-    builder.adjust(2, 1)
+    builder.adjust(1, 1, 1, 1)
     return builder.as_markup()
 
 

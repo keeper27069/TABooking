@@ -366,3 +366,122 @@ if __name__ == "__main__":
     for i, b in enumerate(demos, 1):
         phone_s = f" [+{b['phone']}]" if b['phone'] else ""
         print(f"  {i}. {b['student']}{phone_s} ({b['group']}) - {b['lesson']} @ {b['booking']} [{b['status']}]")
+
+
+async def fetch_crm_analytics(d_from: str, d_to: str) -> dict:
+    """Извлекает официальную аналитику и процент явки из CRM (/account/ta_booking_analytics/list)"""
+    temp_dir = "/tmp/chrome_analytics_session"
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    os.makedirs(os.path.join(temp_dir, "Default"), exist_ok=True)
+
+    src_state = os.path.expanduser("~/Library/Application Support/Google/Chrome/Local State")
+    if os.path.exists(src_state):
+        shutil.copy2(src_state, os.path.join(temp_dir, "Local State"))
+    src_cookies = os.path.expanduser("~/Library/Application Support/Google/Chrome/Default/Cookies")
+    if os.path.exists(src_cookies):
+        shutil.copy2(src_cookies, os.path.join(temp_dir, "Default", "Cookies"))
+
+    chrome_bin = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    proc = subprocess.Popen([
+        chrome_bin,
+        "--headless=new",
+        "--remote-debugging-port=9238",
+        f"--user-data-dir={temp_dir}",
+        "--disable-gpu",
+        "--no-first-run",
+        "https://crm.junior-it.uz/account/ta_booking_analytics/list"
+    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    try:
+        await asyncio.sleep(2.0)
+        req = urllib.request.urlopen("http://127.0.0.1:9238/json")
+        targets = json.loads(req.read().decode())
+        page_target = [t for t in targets if "junior-it.uz" in t.get("url", "")][0]
+
+        ws_url = page_target["webSocketDebuggerUrl"]
+        import websockets
+        async with websockets.connect(ws_url) as ws:
+            await ws.send(json.dumps({"id": 1, "method": "Page.enable"}))
+            await ws.recv()
+
+            js_submit = f"""
+            (() => {{
+                document.querySelector("input[name='tba_date_from']").value = "{d_from}";
+                document.querySelector("input[name='tba_date_to']").value = "{d_to}";
+                document.querySelector("button[type='submit']").click();
+            }})()
+            """
+            await ws.send(json.dumps({"id": 2, "method": "Runtime.evaluate", "params": {"expression": js_submit}}))
+
+            # Drain until loadEventFired
+            for _ in range(40):
+                msg = json.loads(await ws.recv())
+                if msg.get("method") == "Page.loadEventFired":
+                    break
+
+            await asyncio.sleep(0.8)
+
+            js_extract = """
+            (() => {
+                const text = document.body.innerText;
+                const rows = [];
+                document.querySelectorAll("table tr").forEach(tr => {
+                    const tds = Array.from(tr.querySelectorAll("td")).map(td => td.innerText.trim());
+                    if (tds.length >= 4 && /^\d+$/.test(tds[0])) {
+                        rows.push({
+                            num: tds[0],
+                            lesson: tds[1] || '',
+                            course: tds[2] || '',
+                            count: tds[3] || '',
+                            percent: tds[4] || ''
+                        });
+                    }
+                });
+                return JSON.stringify({ text, rows });
+            })()
+            """
+            await ws.send(json.dumps({"id": 3, "method": "Runtime.evaluate", "params": {"expression": js_extract}}))
+
+            while True:
+                msg = json.loads(await ws.recv())
+                if msg.get("id") == 3:
+                    raw_json = msg.get("result", {}).get("result", {}).get("value", "{}")
+                    break
+
+            payload = json.loads(raw_json)
+            lines = [l.strip() for l in payload.get("text", "").split("\n") if l.strip()]
+            data = {
+                "date_from": d_from,
+                "date_to": d_to,
+                "mentor": "",
+                "kutilmoqda": "0",
+                "yaratilgan": "0",
+                "kelgan": "0",
+                "kelmadi": "0",
+                "rad_etilgan": "0",
+                "foiz": "0%",
+                "top_lessons": payload.get("rows", [])
+            }
+
+            for i, line in enumerate(lines):
+                if line == "Kutilmoqda" and i + 1 < len(lines):
+                    data["kutilmoqda"] = lines[i+1]
+                    if i > 0 and not any(x in lines[i-1] for x in ["Analitika", "Menyu", "Filtr"]):
+                        data["mentor"] = lines[i-1]
+                elif line == "Yaratilgan" and i + 1 < len(lines):
+                    data["yaratilgan"] = lines[i+1]
+                elif line == "Kelgan" and i + 1 < len(lines):
+                    data["kelgan"] = lines[i+1]
+                elif line == "Kelmadi" and i + 1 < len(lines):
+                    data["kelmadi"] = lines[i+1]
+                elif line == "Rad etilgan" and i + 1 < len(lines):
+                    data["rad_etilgan"] = lines[i+1]
+                elif line == "Foiz" and i + 1 < len(lines):
+                    data["foiz"] = lines[i+1]
+            return data
+    except Exception as e:
+        print(f"Error fetching analytics: {e}")
+        return {}
+    finally:
+        proc.terminate()
