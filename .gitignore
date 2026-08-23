@@ -1,0 +1,10 @@
+.env
+.venv/
+__pycache__/
+*.log
+.DS_Store
+marks.db
+sent_messages.json
+post_dump.html
+debug_attendance.py
+debug_columns.py
