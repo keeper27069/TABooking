@@ -78,7 +78,7 @@ def _booking_dt(b: dict) -> datetime:
     return datetime.max
 
 
-CACHE_TTL_MINUTES = 20
+CACHE_TTL_SECONDS = 45
 bookings_cache = {"ta": None, "demo": None, "ts": None}
 
 
@@ -94,7 +94,14 @@ async def refresh_cache() -> tuple[list, list]:
 
 
 async def get_cached_section(section: str, force: bool = False) -> list:
-    if force or bookings_cache[section] is None:
+    now = datetime.now()
+    needs_refresh = (
+        force or
+        bookings_cache[section] is None or
+        bookings_cache["ts"] is None or
+        (now - bookings_cache["ts"]).total_seconds() > CACHE_TTL_SECONDS
+    )
+    if needs_refresh:
         await refresh_cache()
     return bookings_cache.get(section) or []
 
@@ -1093,3 +1100,70 @@ async def update_command(message: Message):
 
     except Exception as e:
         await wait_msg.edit_text(f"⚠️ Yangilashda xatolik: {e}")
+
+async def poll_loop(bot: Bot):
+    """Фоновое обновление кэша и напоминания за 5 минут"""
+    while True:
+        try:
+            await asyncio.sleep(45)
+            await refresh_cache()
+            
+            # Check 5 min reminders
+            timeline = await get_today_timeline()
+            now = datetime.now()
+            for b in timeline:
+                st = (b.get("status") or "").upper()
+                if st in ("KELDI", "KELMADI", "BEKOR QILINGAN", "RAD ETILGAN"):
+                    continue
+                dt = _booking_dt(b)
+                if dt == datetime.max:
+                    continue
+                diff = (dt - now).total_seconds() / 60.0
+                if 4.0 <= diff <= 5.5:
+                    b_key = booking_key(b)
+                    if not marks.is_reminded_5m(b_key):
+                        marks.set_reminded_5m(b_key)
+                        admins = marks.get_all_admins()
+                        chat_ids = set([a["chat_id"] for a in admins])
+                        if ADMIN_CHAT_ID:
+                            try:
+                                chat_ids.add(int(ADMIN_CHAT_ID))
+                            except ValueError:
+                                pass
+                        for cid in chat_ids:
+                            u_lang = marks.get_user_lang(cid)
+                            dt_str = dt.strftime("%H:%M")
+                            b_type = t("demo_day", u_lang) if b.get("type") == "Demoday" else t("ta_booking", u_lang)
+                            phone_s = b.get("phone", "")
+                            rem_text = t(
+                                "reminder_5m", u_lang,
+                                min=5,
+                                student=b.get("student", "—"),
+                                phone=phone_s,
+                                group=b.get("group", "—"),
+                                lesson=b.get("lesson", "—"),
+                                time=dt_str,
+                                status=f"{b_type} — {status_icon(st)} {st}"
+                            )
+                            await bot.send_message(cid, rem_text, parse_mode="HTML")
+        except Exception:
+            await asyncio.sleep(30)
+
+
+async def main():
+    bot = Bot(token=BOT_TOKEN)
+    marks.init_db()
+    print("Preloading CRM data into memory cache...")
+    try:
+        await refresh_cache()
+        print("CRM cache ready! Ultra-fast responses enabled.")
+    except Exception as e:
+        print("Cache preload note:", e)
+
+    asyncio.create_task(poll_loop(bot))
+    print("Bot polling started cleanly.")
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
