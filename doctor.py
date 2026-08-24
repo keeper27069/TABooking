@@ -48,31 +48,52 @@ def main():
             print(f"❌ Telegramga ulanishda xatolik: {e}")
 
     # 3. Check CRM Cookie connection
+    def is_auth(html):
+        if not html:
+            return False
+        if 'name="phone"' in html and 'name="pass"' in html:
+            return False
+        return 'tbr_' in html or 'demo_day' in html or '/logout' in html or 'table' in html
+
+    is_valid_session = False
     if "PHPSESSID" in cookie:
         try:
             headers = {"Cookie": cookie, "User-Agent": "Mozilla/5.0"}
             r_ta = requests.get("https://crm.junior-it.uz/account/ta_booking_requests/list?length=50", headers=headers, timeout=15)
-            if r_ta.status_code == 200 and "login" not in r_ta.url.lower():
-                print("🌐 CRM LMS Sessiyasi: ✅ Faol va to'g'ri ishlamoqda!")
-                import crm
-                ta = crm.get_ta_bookings()
-                demo = crm.get_demoday_bookings()
-                print(f"📊 Yuklangan darslar: TA Bookings = {len(ta)} ta, Demo Day = {len(demo)} ta")
-            else:
-                print("⚠️ CRM LMS Cookie eskirgan yoki tizimdan chiqib ketilgan!")
-                print("🔄 Avtomatik Chrome dan yangilashga urinilmoqda...")
-                import sync_cookie
-                sync_ok = sync_cookie.run_sync()
-                if sync_ok:
-                    print("✅ Cookie Chrome dan yangilandi! Qaytadan tekshirilmoqda...")
-                else:
-                    print("❌ Chrome da CRM ochilmagan yoki login qilinmagan. Iltimos Chrome da crm.junior-it.uz ga kiring.")
-        except Exception as e:
-            print(f"❌ CRM bilan aloqa xatosi: {e}")
-    else:
-        print("🔄 Chrome dan Cookie ni avtomatik olish...")
+            if r_ta.status_code == 200 and is_auth(r_ta.text):
+                is_valid_session = True
+        except Exception:
+            pass
+
+    if not is_valid_session:
+        print("⚠️ CRM LMS Cookie eskirgan yoki foydalanuvchi tizimga kirmagan!")
+        print("🔄 Google Chrome brauzeridan faol sessiya qidirilmoqda...")
         import sync_cookie
-        sync_cookie.run_sync()
+        sync_ok = sync_cookie.run_sync()
+        if sync_ok:
+            load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
+            cookie = os.getenv("COOKIE", "").strip()
+            headers = {"Cookie": cookie, "User-Agent": "Mozilla/5.0"}
+            r_ta = requests.get("https://crm.junior-it.uz/account/ta_booking_requests/list?length=50", headers=headers, timeout=15)
+            if r_ta.status_code == 200 and is_auth(r_ta.text):
+                is_valid_session = True
+                print("✅ Cookie Google Chrome dan muvaffaqiyatli yangilandi!")
+            else:
+                print("❌ Chrome da CRM ochilmagan yoki login qilinmagan.")
+        else:
+            print("❌ Google Chrome da faol login topilmadi. Iltimos Chrome da crm.junior-it.uz ga kiring va login qiling.")
+
+    if is_valid_session:
+        print("🌐 CRM LMS Sessiyasi: ✅ Faol va to'g'ri ishlamoqda!")
+        try:
+            import crm
+            ta = crm.get_ta_bookings()
+            demo = crm.get_demoday_bookings()
+            print(f"📊 Yuklangan darslar: TA Bookings = {len(ta)} ta, Demo Day = {len(demo)} ta")
+        except Exception as e:
+            print(f"⚠️ Darslarni yuklashda xatolik: {e}")
+    else:
+        print("❌ CRM ga ulanib bo'lmadi. Iltimos Google Chrome da crm.junior-it.uz ga kirib, o'z hisobingizga kiring!")
 
     print("=" * 55)
 

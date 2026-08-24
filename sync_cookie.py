@@ -35,6 +35,14 @@ def log(msg: str):
         pass
 
 
+def is_authenticated_crm_html(html: str) -> bool:
+    if not html:
+        return False
+    if 'name="phone"' in html and 'name="pass"' in html:
+        return False
+    return 'tbr_' in html or 'demo_day' in html or '/logout' in html or 'table' in html
+
+
 async def extract_fresh_cookie() -> str | None:
     chrome_base = os.path.expanduser("~/Library/Application Support/Google/Chrome")
     if not os.path.exists(chrome_base):
@@ -117,9 +125,11 @@ async def extract_fresh_cookie() -> str | None:
                         test_headers = {"Cookie": cookie_str, "User-Agent": "Mozilla/5.0"}
                         try:
                             r = requests.get("https://crm.junior-it.uz/account/ta_booking_requests/list?length=10", headers=test_headers, timeout=10)
-                            if r.status_code == 200 and "login" not in r.url.lower():
+                            if r.status_code == 200 and is_authenticated_crm_html(r.text):
                                 log(f"✅ Успешно извлечён активный Cookie из профиля '{prof}'!")
                                 return cookie_str
+                            else:
+                                log(f"ℹ️ Профиль '{prof}': Cookie есть, но пользователь не авторизован в CRM.")
                         except Exception:
                             pass
         except Exception as e:
@@ -135,7 +145,7 @@ def run_sync() -> bool:
     try:
         new_cookie = asyncio.run(extract_fresh_cookie())
         if not new_cookie or "PHPSESSID" not in new_cookie:
-            log("❌ Не удалось извлечь PHPSESSID из Chrome.")
+            log("❌ Не удалось извлечь активную сессию (PHPSESSID) из Chrome.")
             return False
 
         # Проверка валидности нового cookie
@@ -144,8 +154,8 @@ def run_sync() -> bool:
             "User-Agent": "Mozilla/5.0"
         }
         r = requests.get("https://crm.junior-it.uz/account/ta_booking_requests/list?length=50", headers=test_headers, timeout=15)
-        if r.status_code != 200 or "login" in r.url.lower():
-            log(f"❌ Извлечённый cookie недействителен (status={r.status_code}, url={r.url})")
+        if r.status_code != 200 or not is_authenticated_crm_html(r.text):
+            log(f"❌ Извлечённый cookie не авторизован в CRM.")
             return False
 
         # Обновление .env

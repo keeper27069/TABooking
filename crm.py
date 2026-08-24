@@ -234,6 +234,14 @@ def _parse_demoday(html: str) -> list:
     return bookings
 
 
+def is_authenticated_crm_html(html: str) -> bool:
+    if not html:
+        return False
+    if 'name="phone"' in html and 'name="pass"' in html:
+        return False
+    return 'tbr_' in html or 'demo_day' in html or '/logout' in html or 'table' in html
+
+
 def get_ta_bookings(dfrom: str = None, dto: str = None, retried: bool = False) -> list:
     if not dfrom or not dto:
         dfrom, dto = _date_range()
@@ -254,7 +262,7 @@ def get_ta_bookings(dfrom: str = None, dto: str = None, retried: bool = False) -
     )
 
     response = requests.get(URL, headers=HEADERS, timeout=20)
-    if "login" in response.url.lower() and not retried:
+    if not is_authenticated_crm_html(response.text) and not retried:
         print("Cookie устарел. Запуск автосинхронизации...")
         if auto_sync_cookie_from_chrome():
             return get_ta_bookings(dfrom, dto, retried=True)
@@ -272,7 +280,7 @@ def get_demoday_bookings(dfrom: str = None, dto: str = None, retried: bool = Fal
 
     url = f"{DEMODAY_URL}?date_from={dfrom}&date_to={dto}"
     response = requests.get(url, headers=HEADERS, timeout=20)
-    if "login" in response.url.lower() and not retried:
+    if not is_authenticated_crm_html(response.text) and not retried:
         print("Cookie устарел для Demo Day. Запуск автосинхронизации...")
         if auto_sync_cookie_from_chrome():
             return get_demoday_bookings(dfrom, dto, retried=True)
