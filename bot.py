@@ -1090,8 +1090,7 @@ async def update_command(message: Message):
         
         await wait_msg.edit_text(
             success_msg,
-            parse_mode="HTML",
-            reply_markup=persistent_menu(lang)
+            parse_mode="HTML"
         )
         
         # 3. Graceful restart after message is sent
