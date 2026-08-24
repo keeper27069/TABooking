@@ -21,13 +21,12 @@ sleep 1
 LAUNCH_PLIST="$HOME/Library/LaunchAgents/com.tabooking.bot.plist"
 LAUNCH_OLD="$HOME/Library/LaunchAgents/com.zafar.tabooking.plist"
 
-if [ -f "$LAUNCH_OLD" ]; then
-    launchctl unload "$LAUNCH_OLD" 2>/dev/null || true
-fi
-
 if [ -f "$LAUNCH_PLIST" ]; then
     launchctl unload "$LAUNCH_PLIST" 2>/dev/null || true
     launchctl load -w "$LAUNCH_PLIST" 2>/dev/null || true
+elif [ -f "$LAUNCH_OLD" ]; then
+    launchctl unload "$LAUNCH_OLD" 2>/dev/null || true
+    launchctl load -w "$LAUNCH_OLD" 2>/dev/null || true
 fi
 
 # Tekshirish: agar launchd ishga tushirmagan bo'lsa, to'g'ridan-to'g'ri fonda ishga tushirish
