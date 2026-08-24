@@ -93,79 +93,14 @@ def get_student_info(detail_url: str) -> dict:
 
 def auto_sync_cookie_from_chrome() -> bool:
     try:
-        import websockets
-
-        async def _extract():
-            temp_dir = "/tmp/chrome_auto_cookie_sync"
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-            os.makedirs(os.path.join(temp_dir, "Default"), exist_ok=True)
-
-            src_state = os.path.expanduser("~/Library/Application Support/Google/Chrome/Local State")
-            if os.path.exists(src_state):
-                shutil.copy2(src_state, os.path.join(temp_dir, "Local State"))
-
-            src_cookies = os.path.expanduser("~/Library/Application Support/Google/Chrome/Default/Cookies")
-            if os.path.exists(src_cookies):
-                shutil.copy2(src_cookies, os.path.join(temp_dir, "Default", "Cookies"))
-
-            chrome_bin = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-            proc = subprocess.Popen([
-                chrome_bin,
-                "--headless=new",
-                "--remote-debugging-port=9225",
-                f"--user-data-dir={temp_dir}",
-                "--disable-gpu",
-                "--no-first-run",
-                "https://crm.junior-it.uz/account/ta_booking_requests/list?length=50"
-            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-            try:
-                await asyncio.sleep(2.5)
-                req = urllib.request.urlopen("http://127.0.0.1:9225/json")
-                targets = json.loads(req.read().decode())
-                page_target = None
-                for t in targets:
-                    if "junior-it.uz" in t.get("url", ""):
-                        page_target = t
-                        break
-
-                if not page_target:
-                    return None
-
-                ws_url = page_target["webSocketDebuggerUrl"]
-                async with websockets.connect(ws_url) as ws:
-                    await ws.send(json.dumps({
-                        "id": 1,
-                        "method": "Network.getCookies",
-                        "params": {"urls": ["https://crm.junior-it.uz/account/ta_booking_requests/list", "https://junior-it.uz"]}
-                    }))
-                    res = await ws.recv()
-                    cookies_list = json.loads(res).get("result", {}).get("cookies", [])
-
-                    cookie_dict = {}
-                    for c in cookies_list:
-                        cookie_dict[c["name"]] = c["value"]
-
-                    return "; ".join([f"{k}={v}" for k, v in cookie_dict.items()])
-            finally:
-                proc.terminate()
-
-        new_cookie = asyncio.run(_extract())
-        if new_cookie and "PHPSESSID" in new_cookie:
-            HEADERS["Cookie"] = new_cookie
-            env_path = os.path.join(os.path.dirname(__file__), ".env")
-            if os.path.exists(env_path):
-                with open(env_path, "r", encoding="utf-8") as f:
-                    lines = f.readlines()
-                new_lines = []
-                for line in lines:
-                    if line.startswith("COOKIE="):
-                        new_lines.append(f"COOKIE={new_cookie}\n")
-                    else:
-                        new_lines.append(line)
-                with open(env_path, "w", encoding="utf-8") as f:
-                    f.writelines(new_lines)
+        import sync_cookie
+        ok = sync_cookie.run_sync()
+        if ok:
+            from dotenv import load_dotenv
+            load_dotenv(override=True)
+            new_c = os.getenv("COOKIE")
+            if new_c:
+                HEADERS["Cookie"] = new_c
             return True
     except Exception as e:
         print(f"Ошибка автосинхронизации cookie: {e}")

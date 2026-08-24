@@ -80,14 +80,20 @@ async def extract_fresh_cookie() -> str | None:
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
         try:
-            await asyncio.sleep(2.5)
-            req = urllib.request.urlopen(f"http://127.0.0.1:{port}/json")
-            targets = json.loads(req.read().decode())
             page_target = None
-            for t in targets:
-                if "junior-it.uz" in t.get("url", ""):
-                    page_target = t
-                    break
+            for _ in range(15):
+                await asyncio.sleep(0.3)
+                try:
+                    req = urllib.request.urlopen(f"http://127.0.0.1:{port}/json", timeout=2)
+                    targets = json.loads(req.read().decode())
+                    for t in targets:
+                        if "junior-it.uz" in t.get("url", ""):
+                            page_target = t
+                            break
+                    if page_target:
+                        break
+                except Exception:
+                    pass
 
             if page_target:
                 import websockets
