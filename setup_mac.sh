@@ -72,13 +72,22 @@ cat << PLIST > "$LAUNCH_DIR/com.tabooking.bot.plist"
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>5</integer>
     <key>StandardOutPath</key>
     <string>$DIR/bot.log</string>
     <key>StandardErrorPath</key>
     <string>$DIR/bot_error.log</string>
     <key>EnvironmentVariables</key>
     <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
         <key>PATH</key>
         <string>$DIR/.venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
     </dict>

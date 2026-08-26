@@ -43,17 +43,27 @@ def is_authenticated_crm_html(html: str) -> bool:
     return 'tbr_' in html or 'demo_day' in html or '/logout' in html or 'table' in html
 
 
+from crm_async import find_chrome_binary, find_chrome_user_data_dir
+
 async def extract_fresh_cookie() -> str | None:
-    chrome_base = os.path.expanduser("~/Library/Application Support/Google/Chrome")
-    if not os.path.exists(chrome_base):
-        log("❌ Папка Google Chrome не найдена в ~/Library/Application Support/Google/Chrome")
+    chrome_base = find_chrome_user_data_dir()
+    if not chrome_base or not os.path.exists(chrome_base):
+        log(f"❌ Папка профилей Chrome не найдена: {chrome_base}")
         return None
 
     # Поиск всех возможных профилей Chrome (Default, Profile 1, Profile 2, etc.)
     profiles = ["Default"]
-    for item in os.listdir(chrome_base):
-        if item.startswith("Profile ") and os.path.isdir(os.path.join(chrome_base, item)):
-            profiles.append(item)
+    try:
+        for item in os.listdir(chrome_base):
+            if item.startswith("Profile ") and os.path.isdir(os.path.join(chrome_base, item)):
+                profiles.append(item)
+    except Exception:
+        pass
+
+    chrome_bin = find_chrome_binary()
+    if not chrome_bin:
+        log("❌ Исполняемый файл Google Chrome/Chromium не найден на системе.")
+        return None
 
     for prof in profiles:
         prof_cookies = os.path.join(chrome_base, prof, "Cookies")
@@ -71,11 +81,6 @@ async def extract_fresh_cookie() -> str | None:
 
         shutil.copy2(prof_cookies, os.path.join(temp_dir, "Default", "Cookies"))
 
-        chrome_bin = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        if not os.path.exists(chrome_bin):
-            log("❌ Google Chrome не установлен в /Applications")
-            return None
-
         port = 9228
         proc = subprocess.Popen([
             chrome_bin,
@@ -83,6 +88,8 @@ async def extract_fresh_cookie() -> str | None:
             f"--remote-debugging-port={port}",
             f"--user-data-dir={temp_dir}",
             "--disable-gpu",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
             "--no-first-run",
             "https://crm.junior-it.uz/account/ta_booking_requests/list?length=50"
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -106,13 +113,13 @@ async def extract_fresh_cookie() -> str | None:
             if page_target:
                 import websockets
                 ws_url = page_target["webSocketDebuggerUrl"]
-                async with websockets.connect(ws_url) as ws:
+                async with websockets.connect(ws_url, ping_interval=5, ping_timeout=5) as ws:
                     await ws.send(json.dumps({
                         "id": 1,
                         "method": "Network.getCookies",
                         "params": {"urls": ["https://crm.junior-it.uz/account/ta_booking_requests/list", "https://junior-it.uz"]}
                     }))
-                    res = await ws.recv()
+                    res = await asyncio.wait_for(ws.recv(), timeout=5.0)
                     cookies_list = json.loads(res).get("result", {}).get("cookies", [])
 
                     cookie_dict = {}
@@ -135,7 +142,13 @@ async def extract_fresh_cookie() -> str | None:
         except Exception as e:
             log(f"Ошибка проверки профиля '{prof}': {e}")
         finally:
-            proc.terminate()
+            try:
+                proc.terminate()
+                time.sleep(0.1)
+                if proc.poll() is None:
+                    proc.kill()
+            except Exception:
+                pass
 
     return None
 

@@ -2,30 +2,37 @@
 
 Одна бронь = одна запись (ключ booking_key = student|group|booking).
 Всё лежит в SQLite-файле marks.db рядом с ботом.
+Потокобезопасная работа с включенным WAL-режимом (Write-Ahead Logging).
 """
+from __future__ import annotations
 
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 
 DB_PATH = Path(__file__).parent / "marks.db"
+_db_lock = threading.Lock()
 
 
-def _conn():
-    conn = sqlite3.connect(DB_PATH)
+def _conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
+    # Включаем WAL режим и busy_timeout для максимальной производительности без блокировок
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute("PRAGMA busy_timeout=10000;")
     return conn
 
 
-def _now():
+def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
 def init_db():
-    with _conn() as c:
+    with _db_lock, _conn() as c:
         c.executescript(
             """
-            
             CREATE TABLE IF NOT EXISTS admins (
                 chat_id INTEGER PRIMARY KEY,
                 username TEXT,
@@ -50,12 +57,17 @@ def init_db():
                 demo_result TEXT,   -- 'pass' | 'fail' | NULL
                 updated_at  TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS reminders_5m (
+                booking_key TEXT PRIMARY KEY,
+                reminded_at TEXT
+            );
             """
         )
 
 
 def get_user_lang(user_id: int) -> str:
-    with _conn() as c:
+    with _db_lock, _conn() as c:
         row = c.execute("SELECT lang FROM user_settings WHERE user_id = ?", (user_id,)).fetchone()
         if row and row["lang"]:
             return row["lang"]
@@ -63,7 +75,7 @@ def get_user_lang(user_id: int) -> str:
 
 
 def set_user_lang(user_id: int, lang: str):
-    with _conn() as c:
+    with _db_lock, _conn() as c:
         c.execute(
             """
             INSERT INTO user_settings (user_id, lang, updated_at)
@@ -84,7 +96,7 @@ def _date_iso(date_raw: str) -> str:
 
 
 def get_mark(booking_key: str):
-    with _conn() as c:
+    with _db_lock, _conn() as c:
         row = c.execute(
             "SELECT * FROM marks WHERE booking_key = ?", (booking_key,)
         ).fetchone()
@@ -104,7 +116,7 @@ def _upsert(booking_key: str, booking: dict, **fields):
     data.update(fields)
     data["updated_at"] = _now()
 
-    with _conn() as c:
+    with _db_lock, _conn() as c:
         c.execute(
             """
             INSERT INTO marks (booking_key, student, grp, date_iso, date_raw, kind, demo_result, updated_at)
@@ -132,19 +144,19 @@ def set_demo_result(booking_key: str, booking: dict, result: str):
 
 
 def clear_mark(booking_key: str):
-    with _conn() as c:
+    with _db_lock, _conn() as c:
         c.execute("DELETE FROM marks WHERE booking_key = ?", (booking_key,))
 
 
 def ensure_row(booking_key: str, booking: dict) -> int:
     _upsert(booking_key, booking)
-    with _conn() as c:
+    with _db_lock, _conn() as c:
         row = c.execute("SELECT rowid FROM marks WHERE booking_key = ?", (booking_key,)).fetchone()
         return row["rowid"]
 
 
 def get_by_rowid(rowid: int):
-    with _conn() as c:
+    with _db_lock, _conn() as c:
         row = c.execute("SELECT rowid, * FROM marks WHERE rowid = ?", (rowid,)).fetchone()
         return dict(row) if row else None
 
@@ -154,7 +166,7 @@ def set_kind_by_id(rowid: int, kind: str):
     if kind == "demo":
         row = get_by_rowid(rowid)
         demo_result = row.get("demo_result") if row else None
-    with _conn() as c:
+    with _db_lock, _conn() as c:
         c.execute(
             "UPDATE marks SET kind=?, demo_result=?, updated_at=? WHERE rowid=?",
             (kind, demo_result, _now(), rowid),
@@ -162,7 +174,7 @@ def set_kind_by_id(rowid: int, kind: str):
 
 
 def set_result_by_id(rowid: int, result: str):
-    with _conn() as c:
+    with _db_lock, _conn() as c:
         c.execute(
             "UPDATE marks SET kind='demo', demo_result=?, updated_at=? WHERE rowid=?",
             (result, _now(), rowid),
@@ -170,7 +182,7 @@ def set_result_by_id(rowid: int, result: str):
 
 
 def clear_by_id(rowid: int):
-    with _conn() as c:
+    with _db_lock, _conn() as c:
         c.execute(
             "UPDATE marks SET kind=NULL, demo_result=NULL, updated_at=? WHERE rowid=?",
             (_now(), rowid),
@@ -178,7 +190,7 @@ def clear_by_id(rowid: int):
 
 
 def report(date_from_iso: str, date_to_iso: str) -> dict:
-    with _conn() as c:
+    with _db_lock, _conn() as c:
         rows = c.execute(
             "SELECT kind, demo_result FROM marks WHERE date_iso >= ? AND date_iso <= ?",
             (date_from_iso, date_to_iso),
@@ -199,7 +211,7 @@ def report(date_from_iso: str, date_to_iso: str) -> dict:
 
 
 def register_user(chat_id: int, username: str = "", first_name: str = "", lang: str = "uz"):
-    with _conn() as c:
+    with _db_lock, _conn() as c:
         c.execute(
             """
             INSERT INTO admins (chat_id, username, first_name, lang, created_at)
@@ -222,6 +234,30 @@ def register_user(chat_id: int, username: str = "", first_name: str = "", lang: 
 
 
 def get_all_admins() -> list[dict]:
-    with _conn() as c:
+    with _db_lock, _conn() as c:
         rows = c.execute("SELECT * FROM admins").fetchall()
         return [dict(r) for r in rows]
+
+
+# --- Методы для автоматических напоминаний за 5 минут ---
+
+def is_reminded_5m(booking_key: str) -> bool:
+    """Проверяет, было ли уже отправлено напоминание за 5 минут по данному уроку"""
+    with _db_lock, _conn() as c:
+        row = c.execute("SELECT 1 FROM reminders_5m WHERE booking_key = ?", (booking_key,)).fetchone()
+        return row is not None
+
+
+def set_reminded_5m(booking_key: str):
+    """Помечает урок как напомненный"""
+    with _db_lock, _conn() as c:
+        c.execute(
+            "INSERT INTO reminders_5m (booking_key, reminded_at) VALUES (?, ?) ON CONFLICT(booking_key) DO NOTHING",
+            (booking_key, _now()),
+        )
+
+
+def clear_old_reminders():
+    """Очищает старые напоминания старше 1 дня"""
+    with _db_lock, _conn() as c:
+        c.execute("DELETE FROM reminders_5m WHERE reminded_at < datetime('now', '-1 day')")

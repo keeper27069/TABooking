@@ -178,6 +178,16 @@ def person_card_keyboard(index: int, page: int, section: str, mark: dict | None 
         clr.button(text=t("clear_mark_btn", lang), callback_data=f"{prefix}mclr_{section}_{index}_{page}")
         builder.attach(clr)
 
+    def _fix_url(raw_url: str) -> str:
+        if not raw_url:
+            return ""
+        raw_url = raw_url.strip()
+        if raw_url.startswith("/"):
+            return f"https://crm.junior-it.uz{raw_url}"
+        if not raw_url.startswith(("http://", "https://", "tg://")):
+            return f"https://{raw_url}"
+        return raw_url
+
     # Telegram & links
     if b:
         action_links = InlineKeyboardBuilder()
@@ -189,10 +199,12 @@ def person_card_keyboard(index: int, page: int, section: str, mark: dict | None 
         elif phone_digits:
             action_links.button(text=t("write_tg_btn", lang, info=f"+{phone_digits}"), url=f"https://t.me/+{phone_digits}")
 
-        if b.get("task_link"):
-            action_links.button(text=t("task_file_btn", lang), url=b["task_link"])
-        if b.get("record_link"):
-            action_links.button(text=t("loom_rec_btn", lang), url=b["record_link"])
+        t_link = _fix_url(b.get("task_link", ""))
+        if t_link:
+            action_links.button(text=t("task_file_btn", lang), url=t_link)
+        r_link = _fix_url(b.get("record_link", ""))
+        if r_link:
+            action_links.button(text=t("loom_rec_btn", lang), url=r_link)
 
         action_links.adjust(1)
         builder.attach(action_links)
@@ -243,10 +255,22 @@ def notify_keyboard(rowid: int, mark: dict | None = None, task_link: str = "", r
     elif phone_digits:
         action_links.button(text=t("write_tg_btn", lang, info=f"+{phone_digits}"), url=f"https://t.me/+{phone_digits}")
 
-    if task_link:
-        action_links.button(text=t("task_file_btn", lang), url=task_link)
-    if record_link:
-        action_links.button(text=t("loom_rec_btn", lang), url=record_link)
+    def _fix_url(raw_url: str) -> str:
+        if not raw_url:
+            return ""
+        raw_url = raw_url.strip()
+        if raw_url.startswith("/"):
+            return f"https://crm.junior-it.uz{raw_url}"
+        if not raw_url.startswith(("http://", "https://", "tg://")):
+            return f"https://{raw_url}"
+        return raw_url
+
+    t_link = _fix_url(task_link)
+    if t_link:
+        action_links.button(text=t("task_file_btn", lang), url=t_link)
+    r_link = _fix_url(record_link)
+    if r_link:
+        action_links.button(text=t("loom_rec_btn", lang), url=r_link)
 
     action_links.adjust(1)
     builder.attach(action_links)

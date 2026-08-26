@@ -17,7 +17,7 @@ fi
 pkill -9 -f "bot.py" || true
 sleep 1
 
-# LaunchAgent qayta yuklash
+# LaunchAgent / Systemd qayta yuklash
 LAUNCH_PLIST="$HOME/Library/LaunchAgents/com.tabooking.bot.plist"
 LAUNCH_OLD="$HOME/Library/LaunchAgents/com.zafar.tabooking.plist"
 
@@ -27,6 +27,8 @@ if [ -f "$LAUNCH_PLIST" ]; then
 elif [ -f "$LAUNCH_OLD" ]; then
     launchctl unload "$LAUNCH_OLD" 2>/dev/null || true
     launchctl load -w "$LAUNCH_OLD" 2>/dev/null || true
+elif command -v systemctl &> /dev/null && systemctl list-unit-files 2>/dev/null | grep -q "tabooking.service"; then
+    sudo systemctl restart tabooking.service 2>/dev/null || true
 fi
 
 # Tekshirish: agar launchd ishga tushirmagan bo'lsa, to'g'ridan-to'g'ri fonda ishga tushirish

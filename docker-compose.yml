@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  tabooking_bot:
+    build: .
+    container_name: tabooking_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./marks.db:/app/marks.db
+      - ./sent_messages.json:/app/sent_messages.json
+      - ./bot.log:/app/bot.log
+    network_mode: "host"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
