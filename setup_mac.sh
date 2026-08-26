@@ -39,7 +39,11 @@ if [ -z "$CURRENT_TOKEN" ] || [ "$CURRENT_TOKEN" = "YOUR_TELEGRAM_BOT_TOKEN_HERE
     if [ -n "$USER_BOT_TOKEN" ]; then
         sed -i '' "s|^BOT_TOKEN=.*|BOT_TOKEN=$USER_BOT_TOKEN|" .env
     fi
+fi
 
+CURRENT_ADMIN=$(grep -E "^ADMIN_CHAT_ID=" .env | cut -d '=' -f2- | tr -d ' "')
+if [ -z "$CURRENT_ADMIN" ] || [ "$CURRENT_ADMIN" = "YOUR_TELEGRAM_CHAT_ID_HERE" ]; then
+    echo ""
     echo "🆔 2. O'zingizning Telegram Chat ID ingizni kiriting (@userinfobot dan):"
     read -r USER_CHAT_ID
     if [ -n "$USER_CHAT_ID" ]; then

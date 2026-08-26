@@ -38,10 +38,22 @@ async def main_async():
     admin_status = f"✅ {admin_id}" if admin_id and "YOUR" not in admin_id else "❌ Kiritilmagan / Не указан"
     print(f"🆔 Admin Chat ID: {admin_status}")
 
-    cookie_status = f"✅ Mavjud ({cookie[:20]}...)" if "PHPSESSID" in cookie else "❌ Noto'g'ri / Не найден"
-    print(f"🍪 Cookie: {cookie_status}")
+    # 2. Check Cookie with Auto-Recovery
+    is_valid_cookie = "PHPSESSID" in cookie and "your_session_id" not in cookie
+    if not is_valid_cookie:
+        print("🔄 Cookie topilmadi. Google Chrome dan faol sessiya qidirilmoqda...")
+        import sync_cookie
+        if sync_cookie.run_sync():
+            load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
+            cookie = os.getenv("COOKIE", "").strip()
+            is_valid_cookie = "PHPSESSID" in cookie and "your_session_id" not in cookie
 
-    # 2. Check Port 49200 (Single Instance Lock)
+    cookie_status = f"✅ Mavjud ({cookie[:25]}...)" if is_valid_cookie else "❌ Noto'g'ri / Не найден"
+    print(f"🍪 Cookie: {cookie_status}")
+    if not is_valid_cookie:
+        print("   👉 ILTIMOS: Google Chrome brauzerida crm.junior-it.uz ga kiring va login qiling!")
+
+    # 3. Check Port 49200 (Single Instance Lock)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.bind(("127.0.0.1", 49200))
@@ -50,7 +62,7 @@ async def main_async():
     except socket.error:
         print("⚠️ Single-Instance Port 49200: 🔴 Boshqa bot jarayoni hozir ishlamoqda (Бот уже запущен в фоне)")
 
-    # 3. Check SQLite DB
+    # 4. Check SQLite DB
     try:
         import marks
         marks.init_db()
@@ -59,7 +71,7 @@ async def main_async():
     except Exception as e:
         print(f"❌ SQLite xatosi: {e}")
 
-    # 4. Check Telegram connection
+    # 5. Check Telegram connection
     if bot_token and "YOUR" not in bot_token:
         try:
             r = requests.get(f"https://api.telegram.org/bot{bot_token}/getMe", timeout=10)
@@ -71,16 +83,21 @@ async def main_async():
                 print(f"❌ Telegram Bot xatosi: {data.get('description')}")
         except Exception as e:
             print(f"❌ Telegramga ulanishda xatolik: {e}")
+    else:
+        print("❌ Telegram Bot Token kiritilmagan (.env faylini tekshiring)")
 
-    # 5. Check CRM connection
-    import crm_async
-    async with aiohttp.ClientSession() as sess:
-        try:
-            ta = await crm_async.get_ta_bookings_async(sess)
-            demo = await crm_async.get_demoday_bookings_async(sess)
-            print(f"📊 CRM Async Engine: ✅ Muvaffaqiyatli! TA Bookings = {len(ta)} ta, Demo Day = {len(demo)} ta")
-        except Exception as e:
-            print(f"⚠️ CRM Async Engine xatosi: {e}")
+    # 6. Check CRM connection
+    if is_valid_cookie:
+        import crm_async
+        async with aiohttp.ClientSession() as sess:
+            try:
+                ta = await crm_async.get_ta_bookings_async(sess)
+                demo = await crm_async.get_demoday_bookings_async(sess)
+                print(f"📊 CRM Async Engine: ✅ Muvaffaqiyatli! TA Bookings = {len(ta)} ta, Demo Day = {len(demo)} ta")
+            except Exception as e:
+                print(f"⚠️ CRM Async Engine xatosi: {e}")
+    else:
+        print("⚠️ CRM tekshiruvi o'tkazib yuborildi (Cookie yo'qligi sababli)")
 
     print("=" * 60)
 

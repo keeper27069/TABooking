@@ -30,10 +30,32 @@ echo "📦 Python kutubxonalarini o'rnatish..."
 
 # 3. Файл .env
 if [ ! -f ".env" ]; then
-    echo "⚙️ .env fayli nusxalanmoqda..."
+    echo "⚙️ .env fayli yaratilmoqda..."
     cp .env.example .env
-    echo "⚠️ Iltimos, .env fayliga BOT_TOKEN, ADMIN_CHAT_ID va COOKIE ni kiriting!"
 fi
+
+CURRENT_TOKEN=$(grep -E "^BOT_TOKEN=" .env | cut -d '=' -f2- | tr -d ' "')
+if [ -z "$CURRENT_TOKEN" ] || [ "$CURRENT_TOKEN" = "YOUR_TELEGRAM_BOT_TOKEN_HERE" ]; then
+    echo ""
+    echo "🔑 1. Telegram Bot Tokeningizni kiriting (@BotFather dan olingan):"
+    read -r USER_BOT_TOKEN
+    if [ -n "$USER_BOT_TOKEN" ]; then
+        sed -i "s|^BOT_TOKEN=.*|BOT_TOKEN=$USER_BOT_TOKEN|" .env
+    fi
+fi
+
+CURRENT_ADMIN=$(grep -E "^ADMIN_CHAT_ID=" .env | cut -d '=' -f2- | tr -d ' "')
+if [ -z "$CURRENT_ADMIN" ] || [ "$CURRENT_ADMIN" = "YOUR_TELEGRAM_CHAT_ID_HERE" ]; then
+    echo ""
+    echo "🆔 2. O'zingizning Telegram Chat ID ingizni kiriting (@userinfobot dan):"
+    read -r USER_CHAT_ID
+    if [ -n "$USER_CHAT_ID" ]; then
+        sed -i "s|^ADMIN_CHAT_ID=.*|ADMIN_CHAT_ID=$USER_CHAT_ID|" .env
+    fi
+fi
+
+# 4. Chrome brauzerdan Cookie ni olish
+.venv/bin/python sync_cookie.py || true
 
 # 4. Создание Systemd Service
 CURRENT_USER=$(whoami)
